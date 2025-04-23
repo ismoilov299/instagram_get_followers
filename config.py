@@ -9,7 +9,7 @@ class BotConfig:
 class InstagramConfig:
     rapidapi_key: str
     rapidapi_host: str
-    follower_count: int = 12
+    follower_count: int = 50
 
 @dataclass
 class Config:
@@ -27,6 +27,6 @@ def load_config():
         instagram=InstagramConfig(
             rapidapi_key=env.str("RAPIDAPI_KEY", "532d0e9edemsh5566c31aceb7163p1343e7jsn11577b0723dd"),
             rapidapi_host=env.str("RAPIDAPI_HOST", "rocketapi-for-developers.p.rapidapi.com"),
-            follower_count=env.int("DEFAULT_FOLLOWER_COUNT", 12)
+            follower_count=env.int("DEFAULT_FOLLOWER_COUNT", 50)
         )
     )
