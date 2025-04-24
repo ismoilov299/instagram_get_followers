@@ -1,32 +1,38 @@
 from dataclasses import dataclass
 from environs import Env
+from typing import Optional
+
 
 @dataclass
-class BotConfig:
+class TelegramConfig:
     token: str
+
 
 @dataclass
 class InstagramConfig:
-    rapidapi_key: str
-    rapidapi_host: str
+    api_key: str
+    api_host: str
     follower_count: int = 50
+
 
 @dataclass
 class Config:
-    bot: BotConfig
+    telegram: TelegramConfig
     instagram: InstagramConfig
 
-def load_config():
+
+def load_config(path: Optional[str] = None) -> Config:
     env = Env()
-    env.read_env()
+    env.read_env(path)
 
     return Config(
-        bot=BotConfig(
+        telegram=TelegramConfig(
             token=env.str("BOT_TOKEN"),
         ),
         instagram=InstagramConfig(
-            rapidapi_key=env.str("RAPIDAPI_KEY", "532d0e9edemsh5566c31aceb7163p1343e7jsn11577b0723dd"),
-            rapidapi_host=env.str("RAPIDAPI_HOST", "rocketapi-for-developers.p.rapidapi.com"),
-            follower_count=env.int("DEFAULT_FOLLOWER_COUNT", 50)
-        )
+            api_key=env.str("RAPIDAPI_KEY"),
+            api_host=env.str("RAPIDAPI_HOST"),
+            follower_count=env.int("DEFAULT_FOLLOWER_COUNT", 50),
+        ),
     )
+
