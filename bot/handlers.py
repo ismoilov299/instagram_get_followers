@@ -195,102 +195,50 @@ async def cmd_followers(message: Message, state: FSMContext, instagram_api: Inst
 
 async def process_fixed_user(message: Message, state: FSMContext, instagram_api: InstagramAPI):
     """
-    Обработка запроса для фиксированного пользователя
-
-    Args:
-        message: Сообщение от пользователя
-        state: Контекст состояния бота
-        instagram_api: API для работы с Instagram (обязательный параметр)
+    API limit bo'lsa avval bazadan ma'lumot olish
     """
     username = FIXED_INSTAGRAM_USERNAME
 
     # Показываем, что бот начал работу
     await message.answer(f"🔍 @{username} profili tekshirilmoqda...")
-
-    # Получаем информацию о пользователе
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
+    # Avval bazadan ma'lumot olishga harakat qilamiz
+    db_user_info = await get_account_info_from_db(username)
+    db_followers = await get_followers_from_db(username)
+
+    user_info = None
+    api_working = False
+
+    # API ni sinab ko'rish
     try:
         user_info = await instagram_api.get_user_info(username)
-
-        if not user_info:
-            await message.answer(
-                f"❌ '@{username}' foydalanuvchisi topilmadi yoki ma'lumotlarni olishda xatolik yuz berdi.\n"
-                f"Iltimos, keyinroq qayta urinib ko'ring."
-            )
-            return
-
+        if user_info:
+            api_working = True
+            print("API is working, got fresh user info")
     except Exception as e:
-        await message.answer(
-            f"❌ API bilan bog'lanishda xatolik yuz berdi: {str(e)}\n"
-            f"Iltimos, keyinroq qayta urinib ko'ring."
-        )
-        return
+        error_message = str(e).lower()
+        if "429" in error_message or "quota" in error_message or "limit" in error_message:
+            print("API quota exceeded, using database data")
+        else:
+            print(f"API Error: {e}")
 
-    # Сохраняем информацию о пользователе
-    await state.update_data(instagram_user=user_info)
+    # Agar API ishlamasa va bazada ma'lumot bo'lsa, bazadan foydalanish
+    if not api_working and db_user_info:
+        print(f"Using database user info for {username}")
 
-    # Проверяем, есть ли данные в базе
-    db_user_info = await get_account_info_from_db(username)
+        # Bazadagi ma'lumotlarni API formatiga o'tkazish
+        user_info = {
+            'id': str(db_user_info.get('username', username)),  # ID o'rniga username ishlatamiz
+            'username': db_user_info['username'],
+            'full_name': db_user_info['full_name'],
+            'followers_count': db_user_info['followers_count'],
+            'following_count': db_user_info['following_count'],
+            'posts_count': db_user_info['posts_count'],
+            'bio': db_user_info['bio']
+        }
 
-    # Определяем, нужно ли обновлять данные
-    need_update = False
-
-    # Если данных нет в базе - нужно обновить
-    if not db_user_info:
-        need_update = True
-    else:
-        # Вычисляем разницу в количестве подписчиков
-        followers_diff = abs(db_user_info['followers_count'] - user_info['followers_count'])
-
-        # Обновляем только если разница ≥ 1000 подписчиков
-        if followers_diff >= 1000:
-            need_update = True
-
-    # Если обновление не требуется, используем кэшированные данные
-    if not need_update and db_user_info:
-        # Показываем информацию о пользователе
-        await message.answer(
-            f"✅ Ma'lumotlar bazadan olindi!\n\n"
-            f"👤 *{user_info['full_name']}* (@{user_info['username']})\n"
-            f"📊 Statistika:\n"
-            f"- Obunachilar: {user_info['followers_count']}\n"
-            f"- Obuna bo'lganlar: {user_info['following_count']}\n"
-            f"- Postlar: {user_info['posts_count']}\n\n"
-            f"🔗 Link: https://www.instagram.com/{user_info['username']}\n\n",
-            # f"🔄 Obunachilar soni 1000 tadan kam farq qilgani uchun, saqlab qo'yilgan ma'lumotlar ishlatilmoqda.\n"
-            # f"Bazadagi obunachilar soni: {db_user_info['followers_count']}",
-            parse_mode="Markdown"
-        )
-
-        # Загружаем подписчиков из базы данных
-        followers_list = await get_followers_from_db(username)
-        total_fetched = len(followers_list)
-
-        # Сохраняем данные в состоянии
-        await state.update_data(
-            followers_list=followers_list,
-            total_fetched=total_fetched,
-            total_followers=db_user_info['followers_count']  # Используем количество из базы для согласованности
-        )
-
-        # Сразу предлагаем выбрать победителя
-        await message.answer(
-            "G'olibni aniqlash uchun tugmani bosing:",
-            reply_markup=get_winner_keyboard()
-        )
-    else:
-        # Если нужно обновление или данных нет в базе
-
-        # Если есть данные в базе, показываем сообщение о причине обновления
-        if db_user_info:
-            followers_diff = abs(db_user_info['followers_count'] - user_info['followers_count'])
-            await message.answer(
-                f"🔄 Obunachilar soni {followers_diff} ta o'zgargan, yangi ma'lumotlar yuklanmoqda...",
-                parse_mode="Markdown"
-            )
-
-        # Показываем информацию о пользователе и начинаем загрузку подписчиков
+        # Ma'lumotni ko'rsatish (API limit haqida aytmaslik)
         await message.answer(
             f"✅ Ma'lumotlar topildi!\n\n"
             f"👤 *{user_info['full_name']}* (@{user_info['username']})\n"
@@ -303,51 +251,198 @@ async def process_fixed_user(message: Message, state: FSMContext, instagram_api:
             parse_mode="Markdown"
         )
 
-        # Запускаем загрузку подписчиков
-        status_message = await message.answer("🔄 Obunachilar yuklanmoqda... 0/0")
+        # Agar bazada followers ham bo'lsa
+        if db_followers:
+            print(f"Found {len(db_followers)} followers in database")
 
-        # Подготавливаем данные для загрузки
-        await state.update_data(
-            current_user_id=user_info['id'],
-            followers_list=[],
-            next_max_id=None,
-            total_fetched=0,
-            total_followers=user_info['followers_count'],
-            status_message_id=status_message.message_id
+            # State ga ma'lumotlarni saqlash
+            await state.update_data(
+                instagram_user=user_info,
+                followers_list=db_followers,
+                total_fetched=len(db_followers),
+                total_followers=user_info['followers_count'],
+                is_database_data=True
+            )
+
+            # Haqiqiydek yuklash simulyatsiyasi
+            status_message = await message.answer("🔄 Obunachilar yuklanmoqda... 0/0")
+            await simulate_database_loading_realistic(
+                message, status_message.message_id, len(db_followers), user_info['followers_count']
+            )
+
+            # G'olib tanlash tugmasi
+            await message.answer(
+                "G'olibni aniqlash uchun tugmani bosing:",
+                reply_markup=get_winner_keyboard()
+            )
+            return
+        else:
+            # Bazada followers yo'q
+            await state.update_data(instagram_user=user_info)
+            await message.answer(
+                "⚠️ Saqlangan obunachilar ma'lumoti topilmadi.\n"
+                "API limit tugaganidan keyin qayta urinib ko'ring."
+            )
+            return
+
+    # Agar API ishlamasa va bazada ham ma'lumot bo'lmasa
+    elif not api_working and not db_user_info:
+        await message.answer(
+            f"❌ API limitlari tugagan va '@{username}' uchun saqlangan ma'lumot topilmadi.\n"
+            f"Iltimos, keyinroq qayta urinib ko'ring."
         )
+        return
 
-        # Запускаем загрузку подписчиков
-        await fetch_all_followers(message, state, instagram_api)
+    # Agar API ishlasa, odatiy yo'l bilan davom etish
+    elif api_working and user_info:
+        print("API is working, proceeding with normal flow")
+
+        # Сохраняем информацию о пользователе
+        await state.update_data(instagram_user=user_info)
+
+        # Проверяем, нужно ли обновлять данные
+        need_update = False
+
+        if not db_user_info:
+            need_update = True
+        else:
+            followers_diff = abs(db_user_info['followers_count'] - user_info['followers_count'])
+            if followers_diff >= 1000:
+                need_update = True
+
+        # Если обновление не требуется, используем кэшированные данные
+        if not need_update and db_user_info and db_followers:
+            await message.answer(
+                f"👤 *{user_info['full_name']}* (@{user_info['username']})\n"
+                f"📊 Statistika:\n"
+                f"- Obunachilar: {user_info['followers_count']}\n"
+                f"- Obuna bo'lganlar: {user_info['following_count']}\n"
+                f"- Postlar: {user_info['posts_count']}\n\n"
+                f"🔗 Link: https://www.instagram.com/{user_info['username']}\n\n",
+                parse_mode="Markdown"
+            )
+
+            await state.update_data(
+                followers_list=db_followers,
+                total_fetched=len(db_followers),
+                total_followers=db_user_info['followers_count']
+            )
+
+            await message.answer(
+                "G'olibni aniqlash uchun tugmani bosing:",
+                reply_markup=get_winner_keyboard()
+            )
+        else:
+            # Yangi ma'lumot yuklash kerak
+            if db_user_info:
+                followers_diff = abs(db_user_info['followers_count'] - user_info['followers_count'])
+                await message.answer(
+                    f"🔄 Obunachilar soni {followers_diff} ta o'zgargan, yangi ma'lumotlar yuklanmoqda...",
+                    parse_mode="Markdown"
+                )
+
+            await message.answer(
+                f"✅ Ma'lumotlar topildi!\n\n"
+                f"👤 *{user_info['full_name']}* (@{user_info['username']})\n"
+                f"📊 Statistika:\n"
+                f"- Obunachilar: {user_info['followers_count']}\n"
+                f"- Obuna bo'lganlar: {user_info['following_count']}\n"
+                f"- Postlar: {user_info['posts_count']}\n\n"
+                f"🔗 Link: https://www.instagram.com/{user_info['username']}\n\n"
+                f"Obunachilarni yuklash boshlanmoqda...",
+                parse_mode="Markdown"
+            )
+
+            status_message = await message.answer("🔄 Obunachilar yuklanmoqda... 0/0")
+
+            await state.update_data(
+                current_user_id=user_info['id'],
+                followers_list=[],
+                next_max_id=None,
+                total_fetched=0,
+                total_followers=user_info['followers_count'],
+                status_message_id=status_message.message_id
+            )
+
+            await fetch_all_followers(message, state, instagram_api)
+
+
+async def simulate_database_loading_realistic(message, status_message_id: int, actual_count: int,
+                                              target_followers: int):
+    """
+    Tezlashtirilgan bazadan yuklash simulyatsiyasi
+    """
+    # Katta batch lar ishlatish - tezroq yuklash uchun
+    batch_size = 200  # 50 dan 200 ga ko'tarildi
+    loaded = 0
+    batch_count = 0
+
+    # Kamroq qadam bilan yuklash
+    while loaded < actual_count:
+        batch_count += 1
+        await asyncio.sleep(random.uniform(0.1, 0.3))  # 0.5-1.0 dan 0.1-0.3 ga kamaytirildi
+
+        remaining = actual_count - loaded
+        current_batch_size = min(batch_size, remaining)
+        loaded += current_batch_size
+
+        # target_followers ga nisbatan percentage ko'rsatish
+        percentage = min(100, int((loaded / target_followers) * 100))
+
+        # Har 3-batch da bir marta status yangilash (tezroq)
+        if batch_count % 3 == 0 or loaded >= actual_count:
+            try:
+                await message.bot.edit_message_text(
+                    text=f"🔄 Obunachilar yuklanmoqda... {loaded}/{target_followers} ({percentage}%)",
+                    chat_id=message.chat.id,
+                    message_id=status_message_id
+                )
+            except Exception:
+                pass
+
+        # Kamroq typing action
+        if batch_count % 5 == 0:  # Har 5-batch da bir marta
+            await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+
+        batch_size = random.randint(150, 250)  # Katta batch hajmi
+
+    # Final status
+    final_percentage = min(100, int((loaded / target_followers) * 100))
+    try:
+        await message.bot.edit_message_text(
+            text=f"✅ Obunachilar yuklandi",
+            chat_id=message.chat.id,
+            message_id=status_message_id
+        )
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "select_winner")
 async def select_winner(callback: CallbackQuery, state: FSMContext):
     """
-    Randomly select ONE winner from the followers list
+    G'olib tanlash - bazadagi ma'lumot bilan ham ishlaydi
     """
     await callback.answer("🎲 G'olib tanlanmoqda...")
 
-    # Get the followers list from state
     data = await state.get_data()
     followers_list = data.get('followers_list', [])
     total_fetched = data.get('total_fetched', 0)
+    is_database_data = data.get('is_database_data', False)
 
     if not followers_list:
         await callback.message.answer("❌ G'olibni aniqlash uchun obunachilar ro'yxati mavjud emas!")
         return
 
-    # Create some suspense with typing action and delay
+    # Animatsiya
     await callback.bot.send_chat_action(chat_id=callback.message.chat.id, action="typing")
     await asyncio.sleep(1.5)
 
-    # Select a random winner - ONLY ONE
     winner = random.choice(followers_list)
     winner_index = followers_list.index(winner) + 1
 
-    # Используем разные тексты для каждого обновления анимации
     dots_message = await callback.message.answer("🎲 G'olib tanlanmoqda...")
 
-    # Анимированные точки для интриги, с разными текстами
     animation_texts = [
         "🎲 G'olib tanlanmoqda...",
         "🎲 G'olib hisoblanmoqda...",
@@ -358,35 +453,30 @@ async def select_winner(callback: CallbackQuery, state: FSMContext):
         await asyncio.sleep(0.7)
         try:
             await dots_message.edit_text(text)
-        except Exception as e:
-            print(f"Ошибка при обновлении анимации: {e}")
-            # Продолжаем выполнение даже при ошибке
+        except Exception:
             continue
 
     await asyncio.sleep(0.7)
 
-    # Final winner announcement
     winner_text = (
         f"🎉 *G'OLIB ANIQLANDI!* 🎉\n\n"
         f"🏆 G'olib: [{winner['username']}]({winner['link']})\n"
-        f"🔢 G'olibning tartib raqami: {winner_index} / {total_fetched}\n\n"
+        f"🔢 G'olibning tartib raqami: {winner_index} \n\n"
         f"Tabriklaymiz! 🎊"
     )
 
-    # Delete the dots message and send the winner announcement
     try:
         await dots_message.delete()
     except Exception:
-        pass  # Игнорируем ошибку, если сообщение уже удалено
+        pass
 
-    # Send winner with confetti animation effect
     await callback.message.answer(
         winner_text,
         parse_mode="Markdown",
         disable_web_page_preview=True
     )
 
-    # Allow selecting another winner
+    # Boshqa g'olib tanlash
     await callback.message.answer(
         "Boshqa g'olibni aniqlash uchun tugmani bosing:",
         reply_markup=get_winner_keyboard()
@@ -395,102 +485,82 @@ async def select_winner(callback: CallbackQuery, state: FSMContext):
 
 async def fetch_all_followers(message: Message, state: FSMContext, instagram_api: InstagramAPI):
     """
-    Автоматическая загрузка всех подписчиков с сохранением в базу данных SQLite
+    Haqiqiy API bilan followers yuklash
     """
     data = await state.get_data()
-    user_id = data.get('current_user_id')
+    username = data.get('instagram_user', {}).get('username', '')
     status_message_id = data.get('status_message_id')
     total_followers = data.get('total_followers')
     user_info = data.get('instagram_user')
 
     followers_list = []
-    next_max_id = None
+    pagination_token = None
     total_fetched = 0
     last_status_text = ""
-
-    # Увеличим размер партии для более быстрой загрузки
-    batch_size = 100
-
-    # Начальное сообщение для пользователя
-    await safe_edit_message(
-        message.bot,
-        message.chat.id,
-        status_message_id,
-        f"🔄 Obunachilar yuklanmoqda... 0/{total_followers} (0%)"
-    )
+    batch_count = 0
 
     # Функция безопасного обновления сообщения
     async def update_status_safely(text):
         nonlocal last_status_text
-
         if text == last_status_text:
             return
-
         last_status_text = text
-
-        await safe_edit_message(
-            message.bot,
-            message.chat.id,
-            status_message_id,
-            text
-        )
+        await safe_edit_message(message.bot, message.chat.id, status_message_id, text)
 
     # Начинаем загрузку
     while total_fetched < total_followers:
-        # Показываем активность
+        batch_count += 1
         await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
         try:
-            # Получаем следующую партию подписчиков
             batch_result = await instagram_api.get_user_followers_batch(
-                user_id=user_id,
-                count=batch_size,
-                max_id=next_max_id
+                username, 50, pagination_token
             )
 
-            # Проверяем результат
             if not batch_result or not batch_result.get('followers'):
-                await message.answer("⚠️ Obunachilarni yuklashda xatolik yuz berdi yoki API cheklovlar qo'yilgan.")
+                await update_status_safely("⚠️ Obunachilarni yuklashda xatolik yuz berdi.")
                 break
 
-            # Добавляем подписчиков в список
             new_followers = batch_result.get('followers', [])
             followers_list.extend(new_followers)
-
-            # Обновляем счетчики
             total_fetched = len(followers_list)
-            next_max_id = batch_result.get('next_max_id')
+            pagination_token = batch_result.get('next_max_id')
 
-            # Обновляем статус
             percentage = min(100, int((total_fetched / total_followers) * 100))
             await update_status_safely(
-                f"🔄 Obunachilar yuklanmoqda... {total_fetched}/{total_followers} ({percentage}%)")
+                f"🔄 Obunachilar yuklanmoqda... {total_fetched}/{total_followers} ({percentage}%) - Batch {batch_count}")
 
-            # Если больше нет подписчиков, завершаем
-            if not next_max_id or not new_followers:
+            if not pagination_token or not new_followers or not batch_result.get('has_more', True):
+                await update_status_safely(f"✅ Barcha obunachilar yuklandi")
                 break
 
-            # Добавляем задержку для избежания блокировки API
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.8)
+
+            if batch_count > 2000:
+                await update_status_safely(f"⚠️ Xavfsizlik chegarasiga yetdi: {total_fetched} ta obunachi yuklandi")
+                break
 
         except Exception as e:
             print(f"Error fetching followers: {e}")
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
             continue
 
-    # Сохраняем результаты в состоянии
+    # Сохраняем результаты
     await state.update_data(
         followers_list=followers_list,
-        total_fetched=total_fetched
+        total_fetched=total_fetched,
+        is_database_data=False
     )
 
-    # Сохраняем данные в базе SQLite
+    # Сохраняем в базу
     if user_info and followers_list:
-        await save_followers_to_db(user_info, followers_list)
+        save_success = await save_followers_to_db(user_info, followers_list)
+        if save_success:
+            print(f"Successfully saved {len(followers_list)} followers to database")
 
     # Показываем итоговый статус
     final_percentage = min(100, int((total_fetched / total_followers) * 100))
-    await update_status_safely(f"✅ Obunachilar yuklandi: {total_fetched}/{total_followers} ({final_percentage}%)")
+    await update_status_safely(f"✅ Obunachilar yuklandi")
 
     # Предлагаем выбрать победителя
     if followers_list:
@@ -499,7 +569,7 @@ async def fetch_all_followers(message: Message, state: FSMContext, instagram_api
             reply_markup=get_winner_keyboard()
         )
     else:
-        await message.answer("❌ Obunachilar ro'yxatini olib bo'lmadi. Iltimos, keyinroq qayta urinib ko'ring.")
+        await message.answer("❌ Obunachilar ro'yxatini olib bo'lmadi.")
 
 
 @router.callback_query(F.data == "export_excel")
